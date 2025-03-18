@@ -4,6 +4,7 @@ import re
 import unicodedata
 import pdfplumber
 import fitz  # PyMuPDF
+import ftfy  # Librería para corregir codificación
 from flask import Flask, request, jsonify
 from difflib import get_close_matches
 
@@ -16,19 +17,20 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# 🔹 Función para limpiar el texto sin afectar letras con tildes
+# 🔹 Función para limpiar y corregir texto
 def clean_text(text):
+    text = ftfy.fix_text(text)  # Corrige caracteres mal codificados
     text = unicodedata.normalize("NFKC", text)  # Normaliza caracteres Unicode
 
-    # Eliminar caracteres de control sin afectar letras
-    text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', text)
+    # Eliminar caracteres de control sin afectar letras con tildes y la ñ
+    text = re.sub(r'[\x00-\x1F\x7F-\x9F]', '', text)
 
-    # Normalizar espacios sin alterar palabras
+    # Normalizar espacios sin unir palabras incorrectamente
     text = re.sub(r'\s{2,}', ' ', text).strip()
 
     return text
 
-# 🔹 Extraer texto con PyMuPDF (Método "dict" para evitar pérdida de caracteres)
+# 🔹 Extraer texto con PyMuPDF
 def extract_text_with_pymupdf(pdf_path):
     text = ""
     doc = fitz.open(pdf_path)
@@ -54,7 +56,7 @@ def extract_text_with_pdfplumber(pdf_path):
                 text += page_text + "\n"
     return text.strip()
 
-# 🔹 Función principal de extracción con verificación de errores
+# 🔹 Función principal de extracción
 def extract_text_from_pdf(pdf_path):
     print(f"📄 Procesando PDF: {pdf_path}")
     
