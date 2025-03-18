@@ -16,52 +16,55 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# 🔹 Limpiar texto sin eliminar caracteres importantes
+# 🔹 Función para limpiar el texto sin afectar letras con tildes
 def clean_text(text):
-    text = unicodedata.normalize("NFKC", text)  # Normalizar caracteres Unicode
+    text = unicodedata.normalize("NFKC", text)  # Normaliza caracteres Unicode
 
-    # Eliminar SOLO caracteres de control sin afectar letras
+    # Eliminar caracteres de control sin afectar letras
     text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', text)
-    text = re.sub(r'\s{2,}', ' ', text).strip()  # Normalizar espacios
+
+    # Normalizar espacios sin alterar palabras
+    text = re.sub(r'\s{2,}', ' ', text).strip()
+
     return text
 
-# 🔹 Extraer texto con PyMuPDF de manera más confiable
-def extract_text_with_pymupdf(pdf_path):
-    text = ""
-    doc = fitz.open(pdf_path)
-    for page in doc:
-        page_text = page.get_text("blocks")  # Extraer bloques de texto
-        if page_text:
-            for block in page_text:
-                text += block[4] + "\n"  # Extraer contenido del bloque de texto
-    return text
-
-# 🔹 Extraer texto con pdfplumber si PyMuPDF falla
+# 🔹 Extraer texto con PyMuPDF (Método "dict" para evitar pérdida de caracteres)
 def extract_text_with_pymupdf(pdf_path):
     text = ""
     doc = fitz.open(pdf_path)
 
     for page in doc:
-        words = page.get_text("dict")["blocks"]  # Extraer texto con estructura
+        words = page.get_text("dict")["blocks"]
         for block in words:
             if "lines" in block:
                 for line in block["lines"]:
                     for span in line["spans"]:
-                        text += span["text"] + " "  # Extraer palabras sin perder letras
+                        text += span["text"] + " "  # Extrae texto sin cortar letras
         text += "\n"
 
     return text.strip()
 
-# 🔹 Función principal de extracción
+# 🔹 Extraer texto con pdfplumber si PyMuPDF falla
+def extract_text_with_pdfplumber(pdf_path):
+    text = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+    return text.strip()
+
+# 🔹 Función principal de extracción con verificación de errores
 def extract_text_from_pdf(pdf_path):
     print(f"📄 Procesando PDF: {pdf_path}")
+    
     text = extract_text_with_pymupdf(pdf_path)  # Intentar con PyMuPDF
 
     if not text or len(text.strip()) < 30:  # Si PyMuPDF falla, usar pdfplumber
         print("⚠️ PyMuPDF no extrajo bien el texto. Probando con pdfplumber...")
-        text = extract_text_with_pymupdf(pdf_path)
+        text = extract_text_with_pdfplumber(pdf_path)
 
-    print("🔍 **Texto extraído ANTES de limpiar:**\n", text[:1000])  # Mostrar los primeros 1000 caracteres
+    print("🔍 **Texto extraído ANTES de limpiar:**\n", text[:1000])  # Depuración
 
     if not text:
         print("❌ No se pudo extraer texto del PDF.")
