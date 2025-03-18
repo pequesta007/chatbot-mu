@@ -1,63 +1,64 @@
 import fitz  # PyMuPDF
-import unicodedata
+import json
 import ftfy
+import unicodedata
 import re
 
-# 🔹 Diccionario de caracteres problemáticos
-reemplazos_hexadecimales = {
-    "\ufb01": "fi", "\ufb02": "fl", "\ufb03": "ffi", "\ufb04": "ffl",  # Ligaduras comunes
-    "\ufb05": "ft", "\ufb06": "st",  # Ligaduras extrañas
-    "\u2019": "'", "\u2018": "'", "\u201c": '"', "\u201d": '"',  # Comillas/apóstrofos
+# 🔹 Diccionario de corrección de caracteres dañados
+reemplazos = {
+    "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "ft", "ﬆ": "st",
+    "ﬀ": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb05": "ft", "\uF02D": "ti",  
 }
 
-# 🔹 Lista de palabras que suelen dañarse en PDFs con fuentes especiales
-correcciones_palabras = {
-    "Gesón": "Gestión",
-    "caracteríscas": "características",
-    "nocaciones": "notificaciones",
-    "vacunaón": "vacunación",
-    "locación": "localización",
-    "parición": "participación",
-}
+# 🔹 Lista de símbolos raros que hay que eliminar
+simbolos_a_eliminar = ["☻", "☼", "♀", "♂", "♫", "►", "•", "↑", "\x02", "\x08", "\x18", "\x0b", "\x0c"]
 
+# 🔹 Función para extraer texto del PDF
 def extract_text_with_pymupdf(pdf_path):
     text = ""
     doc = fitz.open(pdf_path)
 
     for page in doc:
-        page_dict = page.get_text("dict")  # Extraer en formato detallado
-        for block in page_dict["blocks"]:
-            if "lines" in block:
-                for line in block["lines"]:
-                    for span in line["spans"]:
-                        extracted_text = span["text"]
-                        extracted_text = unicodedata.normalize("NFKC", extracted_text)  # Normalizar caracteres Unicode
-                        extracted_text = ftfy.fix_text(extracted_text)  # Corregir errores de codificación
-                        
-                        # 🔹 Reemplazar caracteres hexadecimales
-                        for hex_code, reemplazo in reemplazos_hexadecimales.items():
-                            extracted_text = extracted_text.replace(hex_code, reemplazo)
+        text += page.get_text("text") + "\n"
 
-                        text += extracted_text + " "
-        text += "\n"
+    return text.strip()
 
-    return text
-
+# 🔹 Función para limpiar texto y manejar los `\n`
 def clean_text(text):
-    # 🔹 Corrección manual de palabras con errores en PDFs
-    for palabra_erronea, correccion in correcciones_palabras.items():
-        text = re.sub(rf"\b{palabra_erronea}\b", correccion, text)  # Corrige solo palabras completas
-    
-    text = text.replace("\n", " ").strip()  # Quitar saltos de línea innecesarios
-    text = " ".join(text.split())  # Normalizar espacios
+    text = ftfy.fix_text(text)
+    text = unicodedata.normalize("NFKC", text)
+
+    # 🔹 Reemplazo manual de caracteres dañados
+    for char_raro, reemplazo in reemplazos.items():
+        text = text.replace(char_raro, reemplazo)
+
+    # 🔹 Eliminar símbolos extraños
+    for simbolo in simbolos_a_eliminar:
+        text = text.replace(simbolo, "")
+
+    # 🔹 Forzar separación de letras en palabras clave como "Gestión"
+    text = re.sub(r'G[^\w\s]?es[^\w\s]?ó[^\w\s]?n', "Gestión", text)
+
+    # 🔹 MANEJO DE `\n`
+    text = text.replace("\n", " ")  # 🔹 Opción 1: Eliminar `\n` y unir en una sola línea
+    # text = re.sub(r'\n+', '\n', text).strip()  # 🔹 Opción 2: Mantener saltos de línea
+
     return text
 
-pdf_path = "C:/Users/INFORMATICA/Desktop/chatbot_pdf/uploads/📲 Opciones de la APP Muni mascotas (1).pdf"
+# 🔹 Función para guardar en JSON sin perder el formato original
+def save_to_json(text, json_path="data.json"):
+    text = clean_text(text)
+    data = {"contenido": text}
+
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+    print(f"✅ Texto guardado en '{json_path}' correctamente.")
+
+# 🔹 Ruta del PDF
+pdf_path = "uploads/📲 Opciones de la APP Muni mascotas (1).pdf"
+json_path = "data.json"
+
+# 🔹 Ejecutar extracción y guardar en JSON
 texto_extraido = extract_text_with_pymupdf(pdf_path)
-texto_corregido = clean_text(texto_extraido)
-
-# Guardar el texto corregido
-with open("texto_extraido_corregido.txt", "w", encoding="utf-8") as f:
-    f.write(texto_corregido)
-
-print("✅ Extracción completada. Revisa 'texto_extraido_corregido.txt'.")
+save_to_json(texto_extraido, json_path)
