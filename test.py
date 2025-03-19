@@ -3,62 +3,72 @@ import json
 import ftfy
 import unicodedata
 import re
+import os
 
 # 🔹 Diccionario de corrección de caracteres dañados
 reemplazos = {
     "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "ft", "ﬆ": "st",
-    "ﬀ": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb05": "ft", "\uF02D": "ti",  
+    "ﬀ": "ff", "\ufb01": "fi", "\ufb02": "fl", "\ufb05": "ft", "\uF02D": "ti"
 }
 
 # 🔹 Lista de símbolos raros que hay que eliminar
 simbolos_a_eliminar = ["☻", "☼", "♀", "♂", "♫", "►", "•", "↑", "\x02", "\x08", "\x18", "\x0b", "\x0c"]
 
-# 🔹 Función para extraer texto del PDF
+# 🔹 Función para extraer texto del PDF con estructura
 def extract_text_with_pymupdf(pdf_path):
-    text = ""
     doc = fitz.open(pdf_path)
+    text_by_page = {}
 
-    for page in doc:
-        text += page.get_text("text") + "\n"
+    for i, page in enumerate(doc):
+        text = page.get_text("text")
+        text_by_page[f"Página {i+1}"] = text.strip()  # Guardamos por páginas
 
-    return text.strip()
+    return text_by_page
 
-# 🔹 Función para limpiar texto y manejar los `\n`
+# 🔹 Función para limpiar texto y manejar caracteres dañados
 def clean_text(text):
     text = ftfy.fix_text(text)
     text = unicodedata.normalize("NFKC", text)
 
-    # 🔹 Reemplazo manual de caracteres dañados
     for char_raro, reemplazo in reemplazos.items():
         text = text.replace(char_raro, reemplazo)
 
-    # 🔹 Eliminar símbolos extraños
     for simbolo in simbolos_a_eliminar:
         text = text.replace(simbolo, "")
 
-    # 🔹 Forzar separación de letras en palabras clave como "Gestión"
     text = re.sub(r'G[^\w\s]?es[^\w\s]?ó[^\w\s]?n', "Gestión", text)
 
-    # 🔹 MANEJO DE `\n`
-    text = text.replace("\n", " ")  # 🔹 Opción 1: Eliminar `\n` y unir en una sola línea
-    # text = re.sub(r'\n+', '\n', text).strip()  # 🔹 Opción 2: Mantener saltos de línea
+    return text.strip()
 
-    return text
+# 🔹 Función para procesar TODOS los PDFs en `uploads/` y agregarlos estructurados en JSON
+def process_all_pdfs(upload_folder="uploads", json_path="data.json"):
+    if os.path.exists(json_path):
+        with open(json_path, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError:
+                data = {}
+    else:
+        data = {}
 
-# 🔹 Función para guardar en JSON sin perder el formato original
-def save_to_json(text, json_path="data.json"):
-    text = clean_text(text)
-    data = {"contenido": text}
+    for filename in os.listdir(upload_folder):
+        if filename.lower().endswith(".pdf"):
+            pdf_path = os.path.join(upload_folder, filename)
+            print(f"📄 Procesando: {filename}")
 
+            extracted_text = extract_text_with_pymupdf(pdf_path)
+
+            # 🔹 Limpiar cada página del documento
+            cleaned_text_by_page = {page: clean_text(text) for page, text in extracted_text.items()}
+
+            # 🔹 Guardar el PDF con su contenido estructurado por páginas
+            data[filename] = cleaned_text_by_page
+
+    # 🔹 Guardar en JSON con estructura
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-    print(f"✅ Texto guardado en '{json_path}' correctamente.")
+    print(f"✅ Todos los PDFs han sido procesados y guardados en '{json_path}' con estructura.")
 
-# 🔹 Ruta del PDF
-pdf_path = "uploads/📲 Opciones de la APP Muni mascotas (1).pdf"
-json_path = "data.json"
-
-# 🔹 Ejecutar extracción y guardar en JSON
-texto_extraido = extract_text_with_pymupdf(pdf_path)
-save_to_json(texto_extraido, json_path)
+# 🔹 Ejecutar extracción y guardar en JSON estructurado
+process_all_pdfs()
