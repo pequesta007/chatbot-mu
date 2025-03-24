@@ -1,82 +1,98 @@
 from flask import Flask, request, jsonify
 import json
-import re
 import torch
 import nltk
 from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
 from sentence_transformers import SentenceTransformer, util
 
-# Descargar datos necesarios de nltk
+# Descargar datos de NLTK (solo la primera vez)
 nltk.download("punkt")
 nltk.download("stopwords")
 
 app = Flask(__name__)
 
-# 📌 Cargar `data.json`
+DATA_FILE = "data.json"
+
+# Diccionario de saludos
+SALUDOS = {
+    "hola": "¡Hola! ¿En qué puedo ayudarte con tu mascota? 😊",
+    "hi": "¡Hola! ¿Cómo puedo ayudarte? 🐶",
+    "qué tal": "¡Todo bien! ¿Tienes alguna consulta sobre tu mascota?",
+    "q tal": "¡Hola! Dime en qué necesitas ayuda.",
+    "cómo estás": "¡Estoy listo para ayudarte con cualquier consulta sobre mascotas! 🐾",
+    "buenas": "¡Hola! ¿Cómo puedo ayudarte?"
+}
+
+# Lista de opciones disponibles
+OPCIONES = [
+    "Registro y gestión de mascotas",
+    "Localización y reporte de pérdidas",
+    "Escaneo de código QR",
+    "Control Sanitario",
+    "Ubicación de veterinarias",
+    "Adopción y comunidad",
+    "Soporte técnico"
+]
+
+# Cargar datos desde JSON
 def load_data():
     try:
-        with open("data.json", "r", encoding="utf-8") as f:
-            return json.load(f)  # Retorna el diccionario completo
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+            textos, referencias = [], []
+            for filename, sections in raw_data.items():
+                for section, content in sections.items():
+                    if isinstance(content, dict):
+                        for sub_section, sub_content in content.items():
+                            if isinstance(sub_content, list):
+                                texto = " ".join(sub_content)  # Unir texto de listas
+                                if len(texto) > 20:
+                                    textos.append(texto)
+                                    referencias.append(f"{filename} > {section} > {sub_section}")
+                    elif isinstance(content, list):
+                        texto = " ".join(content)
+                        if len(texto) > 20:
+                            textos.append(texto)
+                            referencias.append(f"{filename} > {section}")
+            return textos, referencias
     except Exception as e:
-        print(f"❌ ERROR al cargar data.json: {e}")
-        return {}
+        print(f"❌ ERROR al cargar {DATA_FILE}: {e}")
+        return [], []
 
-data = load_data()
-
-# 📌 Cargar modelo de embeddings
+# Cargar datos y modelo de embeddings
+data, referencias = load_data()
 model = SentenceTransformer("all-MiniLM-L6-v2")
-stop_words = set(stopwords.words("spanish"))
+embeddings = model.encode(data, convert_to_tensor=True) if data else None
 
-# 📌 Preprocesar texto (minúsculas y limpieza de caracteres)
-def preprocess_text(text):
-    text = text.lower()
-    text = re.sub(r"[^\w\s]", "", text)  # Elimina signos de puntuación
-    return text.strip()
-
-# 📌 Extraer palabras clave de la pregunta
-def extraer_palabras_clave(pregunta):
-    palabras = word_tokenize(pregunta, language="spanish")
-    palabras_clave = [palabra for palabra in palabras if palabra not in stop_words and palabra.isalpha()]
-    return set(palabras_clave)
-
-# 📌 Generar embeddings solo con fragmentos útiles
-def generar_embeddings():
-    textos = []
-    mapeo_texto = []  # Guardar referencia del texto original
-    for key, contenido in data.items():
-        if isinstance(contenido, str):
-            frases = contenido.split(". ")  # Dividir en frases manejables
-            frases = [frase for frase in frases if len(frase) > 30]  # Filtrar frases muy cortas
-            textos.extend(frases)
-            mapeo_texto.extend([key] * len(frases))  # Asignar clave de origen a cada frase
-    return textos, model.encode(textos, convert_to_tensor=True), mapeo_texto
-
-textos, txt_embeddings, mapeo_texto = generar_embeddings()
-
-# 📌 Buscar respuesta usando embeddings y palabras clave
+# Buscar la mejor respuesta
 def buscar_respuesta(pregunta):
+    if not data or embeddings is None:
+        return "No hay información disponible en la base de datos."
+    
+    pregunta_limpia = pregunta.lower().strip()
+    
+    # Manejo de saludos
+    for saludo, respuesta in SALUDOS.items():
+        if saludo in pregunta_limpia:
+            return respuesta
+    
+    # Responder sobre opciones disponibles
+    if "opciones" in pregunta_limpia:
+        return "Aquí tienes las opciones disponibles: \n- " + "\n- ".join(OPCIONES)
+    
+    # Comparación semántica
     pregunta_emb = model.encode(pregunta, convert_to_tensor=True)
-    similitudes = util.pytorch_cos_sim(pregunta_emb, txt_embeddings)[0]
-    idx_mejor = torch.argmax(similitudes).item()
-    mejor_respuesta = textos[idx_mejor]
+    similitudes = util.pytorch_cos_sim(pregunta_emb, embeddings)[0]
+    umbral_similitud = 0.50
+    mejores_indices = [i for i in range(len(similitudes)) if similitudes[i] > umbral_similitud]
     
-    # 🔹 Extraer palabras clave de la pregunta
-    palabras_clave_pregunta = extraer_palabras_clave(pregunta)
-    palabras_clave_respuesta = extraer_palabras_clave(mejor_respuesta)
+    if not mejores_indices:
+        return "No encontré una respuesta exacta, pero intenta reformular tu pregunta."
     
-    # 🔹 Filtrar respuestas que no sean instrucciones claras
-    palabras_relevantes = {"registrar", "registro", "mascota", "agregar", "formulario"}
-    if not palabras_relevantes & palabras_clave_respuesta:
-        return "No encontré una respuesta exacta, pero revisa la sección de registro en la app."  
-    
-    # 🔹 Limitar la respuesta a 2-3 oraciones relevantes
-    oraciones = mejor_respuesta.split(". ")
-    respuesta_corta = ". ".join(oraciones[:3])
-    
-    return respuesta_corta if similitudes[idx_mejor] > 0.3 else "Lo siento, no encontré información relevante."
+    idx_mejor = mejores_indices[torch.argmax(similitudes[mejores_indices]).item()]
+    return data[idx_mejor]
 
-# 📌 API para recibir preguntas y dar respuestas
+# API para recibir preguntas y generar respuestas
 @app.route("/ask", methods=["POST"])
 def ask():
     user_input = request.json.get("question", "").strip()

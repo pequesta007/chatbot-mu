@@ -1,0 +1,13 @@
+import requests
+
+url = "http://127.0.0.1:5000/ask"
+
+while True:
+    pregunta = input("Tú: ")
+    if pregunta.lower() in ["salir", "exit"]:
+        break
+
+    data = {"question": pregunta}
+    response = requests.post(url, json=data)
+    
+    print("pericles:", response.json().get("response", "Error en la respuesta"))
